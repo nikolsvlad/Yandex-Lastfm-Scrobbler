@@ -14,7 +14,8 @@
   const SELECTORS = {
     // Название трека
     trackTitle: [
-      '[class*="Meta_title"]',
+      '[class*="Meta_title__"]',
+      '[class*="Meta_title_"]',
       '[class*="PlayerBarTitle"]',
       '[class*="TrackTitle"]',
       '.track__title',
