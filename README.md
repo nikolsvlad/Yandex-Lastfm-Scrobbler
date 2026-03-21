@@ -1,3 +1,3 @@
-Яндекс Музыка → Last.fm Scrobbler
+# Яндекс Музыка → Last.fm Scrobbler
 
 Google Chrome-расширение для автоматического скроблинга треков из Яндекс Музыки на Last.fm.
