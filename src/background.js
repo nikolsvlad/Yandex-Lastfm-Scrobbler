@@ -152,6 +152,7 @@ class LastFmAPI {
     return this.call('track.updateNowPlaying', {
       artist: track.artist,
       track: track.title,
+      album: track.album || '',
       duration: track.duration || '',
     }, true);
   }
@@ -160,6 +161,7 @@ class LastFmAPI {
     return this.call('track.scrobble', {
       artist: track.artist,
       track: track.title,
+      album: track.album || '',
       timestamp: track.timestamp,
       duration: track.duration || '',
     }, true);
