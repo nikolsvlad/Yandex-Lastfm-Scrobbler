@@ -57,6 +57,11 @@
       '[class*="Progress__left"]',
       '.progress__time-left',
     ],
+    // Альбом
+    trackAlbum: [
+      '[class*="Meta_albumLink"]',
+      '[class*="Meta_album"]',
+    ],
   };
 
   // Корневой элемент плеера — ищем только внутри него
@@ -192,9 +197,12 @@
       }
     }
 
+    const album = getTextContent(SELECTORS.trackAlbum) || '';
+
     return {
       title: title.replace(/\s+/g, ' ').trim(),
       artist: cleanArtist.replace(/\s+/g, ' ').trim(),
+      album: album.trim(),
       duration: duration || 0,
       timestamp: Math.floor(Date.now() / 1000),
     };
