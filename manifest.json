@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Яндекс Музыка → Last.fm Scrobbler",
-  "version": "1.0.2",
+  "version": "2.0",
   "description": "Скроблинг треков из Яндекс Музыки на Last.fm в реальном времени",
   "permissions": [
     "storage",

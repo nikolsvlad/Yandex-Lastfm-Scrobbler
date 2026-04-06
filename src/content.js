@@ -57,11 +57,6 @@
       '[class*="Progress__left"]',
       '.progress__time-left',
     ],
-    // Альбом
-    trackAlbum: [
-      '[class*="Meta_albumLink"]',
-      '[class*="Meta_album"]',
-    ],
   };
 
   // Корневой элемент плеера — ищем только внутри него
@@ -197,12 +192,9 @@
       }
     }
 
-    const album = getTextContent(SELECTORS.trackAlbum) || '';
-
     return {
       title: title.replace(/\s+/g, ' ').trim(),
       artist: cleanArtist.replace(/\s+/g, ' ').trim(),
-      album: album.trim(),
       duration: duration || 0,
       timestamp: Math.floor(Date.now() / 1000),
     };
@@ -211,6 +203,20 @@
   function tracksEqual(a, b) {
     if (!a || !b) return false;
     return a.title === b.title && a.artist === b.artist;
+  }
+
+  async function fetchAlbumTitle() {
+    try {
+      const link = document.querySelector('[class*="Meta_albumLink"]');
+      const href = link?.href || '';
+      const match = href.match(/\/album\/(\d+)/);
+      if (!match) return '';
+      const resp = await fetch(`https://api.music.yandex.net/albums/${match[1]}`);
+      const data = await resp.json();
+      return data?.result?.title || '';
+    } catch (e) {
+      return '';
+    }
   }
 
   function sendToBackground(type, data) {
@@ -251,8 +257,12 @@
     return 0;
   }
 
-  function onTrackChanged(track) {
+  async function onTrackChanged(track) {
     console.log('[Scrobbler] Новый трек:', track.artist, '—', track.title);
+
+    // Получаем название альбома через Яндекс API
+    track.album = await fetchAlbumTitle();
+    if (track.album) console.log('[Scrobbler] Альбом:', track.album);
 
     // Отправляем "now playing"
     sendToBackground('NOW_PLAYING', { track });

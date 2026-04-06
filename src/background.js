@@ -1,6 +1,3 @@
-// Firefox compatibility
-if (typeof browser !== 'undefined' && typeof chrome === 'undefined') { var chrome = browser; }
-
 // ===== Background Service Worker =====
 // Обрабатывает авторизацию и взаимодействие с Last.fm API
 
