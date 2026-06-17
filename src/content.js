@@ -9,11 +9,15 @@
   let scrobbleTimer = null;
   let nowPlayingTimer = null;
   let observer = null;
+  let wasPaused = false;      // отслеживаем паузу
+  let pauseTime = null;       // время когда поставили на паузу
+  let listenedBeforePause = 0; // сколько секунд прослушано до паузы
 
   // Селекторы для поиска элементов плеера Яндекс Музыки
   const SELECTORS = {
     // Название трека
     trackTitle: [
+      '[class*="VibePlayerbarMeta_trackNameText"]',
       '[class*="Meta_title__"]',
       '[class*="Meta_title_"]',
       '[class*="PlayerBarTitle"]',
@@ -61,7 +65,11 @@
 
   // Корневой элемент плеера — ищем только внутри него
   function getPlayerBar() {
-    return document.querySelector('[class*="PlayerBar_root"], [class*="PlayerBarDesktop"]');
+    return document.querySelector('[class*="VibePlayerBar_root"], [class*="PlayerBar_root"], [class*="PlayerBarDesktop"]');
+  }
+
+  function isVibePlayer() {
+    return !!document.querySelector('[class*="VibePlayerBar_root"]');
   }
 
   function querySelector(selectors) {
@@ -102,6 +110,12 @@
   }
 
   function isPlaying() {
+    // Для Vibe плеера
+    if (isVibePlayer()) {
+      const playBtn = document.querySelector('[class*="VibePlayerControls_playButton_playing"]');
+      if (playBtn) return true;
+    }
+
     // 1. Самый надёжный способ — проверить audio элемент
     const audios = document.querySelectorAll('audio');
     for (const audio of audios) {
@@ -147,7 +161,13 @@
 
   function getCurrentTrackInfo() {
     const title = getTextContent(SELECTORS.trackTitle);
-    const artist = getTextContent(SELECTORS.trackArtist);
+    let artist = getTextContent(SELECTORS.trackArtist);
+    if (!artist && isVibePlayer()) {
+      const vibeArtists = document.querySelectorAll('[class*="VibePage_text"][class*="VibePage_important"]');
+      if (vibeArtists.length > 0) {
+        artist = Array.from(vibeArtists).map(el => el.textContent.trim()).join(', ');
+      }
+    }
 
     if (!title || !artist) return null;
 
@@ -207,7 +227,19 @@
 
   async function fetchAlbumTitle() {
     try {
-      const link = document.querySelector('[class*="Meta_albumLink"]');
+      const player = getPlayerBar();
+      if (!player) return '';
+
+      // Для Vibe плеера — берём из aria-label обложки
+      if (isVibePlayer()) {
+        const cover = player.querySelector('[class*="AlbumCover"]');
+        const label = cover?.getAttribute('aria-label') || '';
+        // Убираем "Альбом " из начала
+        return label.replace(/^Альбом\s+/i, '').trim();
+      }
+
+      // Для обычного плеера — через API Яндекса
+      const link = player.querySelector('[class*="Meta_albumLink"]');
       const href = link?.href || '';
       const match = href.match(/\/album\/(\d+)/);
       if (!match) return '';
@@ -241,6 +273,15 @@
   }
 
   function getDuration() {
+    // Для Vibe плеера — парсим "00:46 / 03:32"
+    const vibeTimecode = document.querySelector('[class*="VibePlayerbarMeta_timecodeOverlay"]');
+    if (vibeTimecode) {
+      const parts = vibeTimecode.textContent.trim().split('/');
+      if (parts.length === 2) {
+        const dur = parseTime(parts[1].trim());
+        if (dur > 0) return dur;
+      }
+    }
     // Из прогресс-бара — ищем span с классом Timecode_root_end
     const endEl = document.querySelector('[class*="Timecode_root_end"]');
     if (endEl) {
@@ -267,8 +308,6 @@
     // Отправляем "now playing"
     sendToBackground('NOW_PLAYING', { track });
 
-    if (scrobbleTimer) clearTimeout(scrobbleTimer);
-
     // Ждём появления длительности до 5 секунд, затем запускаем скроблинг
     let attempts = 0;
     const waitForDuration = setInterval(() => {
@@ -277,27 +316,9 @@
       if (dur > 0 || attempts >= 10) {
         clearInterval(waitForDuration);
         if (dur > 0) track.duration = dur;
-
-        const scrobbleDelay = track.duration > 0
-          ? Math.min(track.duration * 1000 / 2, 4 * 60 * 1000)
-          : 2 * 60 * 1000;
-
-        console.log(`[Scrobbler] Скроблинг через ${Math.round(scrobbleDelay / 1000)}с (длительность: ${track.duration}с)`);
-
-        scrobbleTimer = setTimeout(() => {
-          if (isPlaying() && tracksEqual(currentTrack, track)) {
-            console.log('[Scrobbler] Отправляем скробл:', track.artist, '—', track.title);
-            chrome.runtime.sendMessage({ type: 'SCROBBLE', track }).then(resp => {
-              console.log('[Scrobbler] Ответ на скробл:', JSON.stringify(resp));
-            }).catch(err => {
-              console.error('[Scrobbler] Ошибка отправки скробла:', err);
-            });
-          } else {
-            console.log('[Scrobbler] Скробл отменён (трек сменился или пауза)');
-          }
-        }, scrobbleDelay);
+        scheduleScrobble(track);
       }
-    }, 500); // проверяем каждые 500мс
+    }, 500);
   }
 
   function checkPlayer() {
@@ -310,16 +331,72 @@
       console.log('[Scrobbler] Статус:', playing ? 'играет' : 'пауза', '| Трек:', track?.title, '|', track?.artist);
     }
 
-    if (!playing) return;
     if (!track || !track.title || !track.artist) return;
 
+    if (!playing) {
+      // Запоминаем момент паузы
+      if (!wasPaused && tracksEqual(currentTrack, track)) {
+        wasPaused = true;
+        pauseTime = Date.now();
+        if (scrobbleTimer) {
+          clearTimeout(scrobbleTimer);
+          scrobbleTimer = null;
+          // Сохраняем сколько уже прослушали
+          listenedBeforePause += (Date.now() - (trackStartTime || Date.now()));
+          console.log('[Scrobbler] Пауза, прослушано:', Math.round(listenedBeforePause / 1000), 'с');
+        }
+      }
+      return;
+    }
+
+    // Трек сменился
     if (!tracksEqual(currentTrack, track)) {
       currentTrack = track;
       trackStartTime = Date.now();
+      wasPaused = false;
+      pauseTime = null;
+      listenedBeforePause = 0;
       onTrackChanged(track);
+      return;
+    }
+
+    // Возобновление после паузы
+    if (wasPaused) {
+      wasPaused = false;
+      trackStartTime = Date.now();
+      console.log('[Scrobbler] Возобновление, уже прослушано:', Math.round(listenedBeforePause / 1000), 'с');
+      // Запускаем таймер с учётом уже прослушанного времени
+      scheduleScrobble(track);
     }
   }
   checkPlayer._lastLog = 0;
+
+  function scheduleScrobble(track) {
+    if (scrobbleTimer) clearTimeout(scrobbleTimer);
+
+    const dur = getDuration() || track.duration || 0;
+    if (dur > 0) track.duration = dur;
+
+    const scrobbleTarget = dur > 0
+      ? Math.min(dur * 1000 / 2, 4 * 60 * 1000)
+      : 2 * 60 * 1000;
+
+    const remaining = Math.max(0, scrobbleTarget - listenedBeforePause);
+    console.log(`[Scrobbler] Скроблинг через ${Math.round(remaining / 1000)}с (осталось)`);
+
+    scrobbleTimer = setTimeout(() => {
+      if (isPlaying() && tracksEqual(currentTrack, track)) {
+        console.log('[Scrobbler] Отправляем скробл:', track.artist, '—', track.title);
+        chrome.runtime.sendMessage({ type: 'SCROBBLE', track }).then(resp => {
+          console.log('[Scrobbler] Ответ на скробл:', JSON.stringify(resp));
+        }).catch(err => {
+          console.error('[Scrobbler] Ошибка отправки скробла:', err);
+        });
+      } else {
+        console.log('[Scrobbler] Скробл отменён (трек сменился или пауза)');
+      }
+    }, remaining);
+  }
 
   function init() {
     console.log('[Scrobbler] Яндекс Музыка → Last.fm инициализирован');
